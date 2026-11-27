@@ -37,19 +37,19 @@ class PhoneDispatch(
 ) {
 
     /** What the caller learned by the time its bound ran out. */
-    sealed class Outcome {
-        /** The work finished and produced its JSON answer. */
-        data class Returned(val json: String) : Outcome()
+    sealed class Outcome<out T> {
+        /** The work finished and returned a value. */
+        data class Returned<T>(val value: T) : Outcome<T>()
 
         /** The bound ran out. The work may still be running, and may still complete. */
-        data object TimedOut : Outcome()
+        data object TimedOut : Outcome<Nothing>()
     }
 
     /** Queue one action on the engine thread. */
-    fun submit(work: () -> String): Future<String> = executor.submit<String> { work() }
+    fun <T> submit(work: () -> T): Future<T> = executor.submit<T> { work() }
 
     /** Wait up to [timeoutMs] for [future]. A timeout leaves the work running on purpose. */
-    fun await(future: Future<String>): Outcome = try {
+    fun <T> await(future: Future<T>): Outcome<T> = try {
         Outcome.Returned(future.get(timeoutMs, TimeUnit.MILLISECONDS))
     } catch (_: TimeoutException) {
         Outcome.TimedOut
@@ -59,5 +59,5 @@ class PhoneDispatch(
     }
 
     /** Submit and wait in one step. */
-    fun call(work: () -> String): Outcome = await(submit(work))
+    fun <T> call(work: () -> T): Outcome<T> = await(submit(work))
 }

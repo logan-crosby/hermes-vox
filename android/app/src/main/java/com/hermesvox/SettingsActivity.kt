@@ -2130,6 +2130,7 @@ class SettingsActivity : AppCompatActivity() {
     // prefs the pipeline reads; defaults = shipped values; a restore-defaults
     // button resets all eight) -------------------------------------------
     private fun bindMicSettings() {
+        bindMicToggle(R.id.set_local_voice_routing, LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED)
         bindMicToggle(R.id.set_mic_aec, "mic_aec", true)
         bindMicToggle(R.id.set_ns_extra, "ns_extra", true)
         bindMicToggle(R.id.set_partial_stt, "partial_stt", true)
@@ -2793,6 +2794,7 @@ class SettingsActivity : AppCompatActivity() {
         val e = prefs.edit()
         when (group) {
             GROUP_MIC -> e
+                .putBoolean(LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED)
                 .putFloat("vad_threshold", 0.5f)
                 .putInt("vad_silence_ms", 800)
                 .putInt("vad_early_silence_ms", 450)

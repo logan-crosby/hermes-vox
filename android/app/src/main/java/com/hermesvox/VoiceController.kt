@@ -52,8 +52,10 @@ class VoiceController(private val context: Context, private val session: HermesS
         fun onDelta(text: String)       // incremental assistant text (live)
         fun onLog(line: String)         // stream-console line (events, tool progress)
         fun onReply(finalText: String)  // assembled final reply (for TTS + settle)
+        fun onLocalReply(finalText: String) {}
+        fun onTypedSubmitted(display: String) {}
         fun onError(msg: String)
-        /** The exact text a voice turn is about to send Hermes — "what it heard".
+        /** The exact text of the voice turn.
          *  Shown briefly so a mishearing is noticed (and barged over) before the
          *  reply lands. Display only: hosts must not persist it unless the user
          *  opted into `log_transcripts`. */
@@ -534,6 +536,8 @@ class VoiceController(private val context: Context, private val session: HermesS
     // hold with content, or a turn suppressed by `turnInFlight`. One slot, newest wins; it is
     // submitted when the current turn settles ([runPendingTurn]), never discarded.
     private val pendingTurn = PendingTurn()
+    private val localVoiceTurn = LocalVoiceTurn()
+    private var localReplyGen: Long? = null
     // The phone's own actions — timer, alarm, do-not-disturb, volume, and the rest of the tool.
     // Created on first use so a probe-only controller never touches the alarm/audio services.
     private val localActions: LocalActions by lazy { LocalActions.shared(context) }
@@ -1025,6 +1029,8 @@ class VoiceController(private val context: Context, private val session: HermesS
                     if (seeded != null) speechStartAt = segStart   // the carry opens in speech
                     // VAD-driven segmentation: gather one utterance; close it on a pause.
                     val partialEnabled = micBool("partial_stt", true)
+                    val allowLocalVoice = stt !is RemoteStt && localVoiceEnabled()
+                    var confirmedEndpoint = false
                     // #235: the streaming arm keeps ONE stream for this utterance; the partial
                     // worker feeds it only seg[liveFed, …) — the audio it has not decoded yet —
                     // and the turn's text finishes that stream instead of re-decoding the clip.
@@ -1118,6 +1124,7 @@ class VoiceController(private val context: Context, private val session: HermesS
                             if (inSpeech && !turnInFlight) {
                                 val at = android.os.SystemClock.uptimeMillis()
                                 if (semantic.verdict(silentMs.toLong(), at) == SemanticEndpoint.Verdict.FINAL) {
+                                    confirmedEndpoint = true
                                     VoxLog.d("event=endpoint-semantic verdict=final eagerness=${semantic.eagerness.key} " +
                                         "silenceMs=$silentMs stableMs=${semantic.stableMs(at)} " +
                                         "elapsedMs=${EndpointRule.utteranceMs(at, speechStartAt)} " +
@@ -1125,7 +1132,10 @@ class VoiceController(private val context: Context, private val session: HermesS
                                     break
                                 }
                             }
-                        } else if (inSpeech && silentMs > silenceMs) break      // pause -> utterance complete
+                        } else if (inSpeech && silentMs > silenceMs) {
+                            confirmedEndpoint = true
+                            break
+                        }
                         if (ackRate != Backchannel.Rate.OFF && inSpeech) {
                             val at = android.os.SystemClock.uptimeMillis()
                             val hyp = latestPartial.get()?.takeIf { it.segId == segId }?.text.orEmpty()
@@ -1192,7 +1202,8 @@ class VoiceController(private val context: Context, private val session: HermesS
                                         // #229: the endpointer's stability clock runs on the live
                                         // hypothesis, so it must see every tick that changed it.
                                         if (live != null) semantic?.onPartial(t, android.os.SystemClock.uptimeMillis())
-                                        if (voiceState.mayStart(t, sm, now)) {
+                                        val deferToFinal = allowLocalVoice && LocalVoiceRouting.phoneArguments(t) != null
+                                        if (voiceState.mayStart(t, sm, now) && !deferToFinal) {
                                             main.post {
                                                 if (!turnInFlight && !commitRequested && segCounter == segId) {
                                                     listener?.onLog(if (logTranscripts()) "// partial → ${t.take(120)}" else "// (partial)")
@@ -1238,12 +1249,14 @@ class VoiceController(private val context: Context, private val session: HermesS
                     val speechOk = inSpeech && seg.size >= (sr * minSpeechMs / 1000)
                     val partial = latestPartial.get()?.takeIf { it.segId == segId }
                     val reused = speechOk && partial != null &&
-                        EarlyStartRule.mayReusePartial(partial.start, partial.end, lastSpeechEnd)
+                        EarlyStartRule.mayReusePartial(partial.start, partial.end, lastSpeechEnd) &&
+                        !(allowLocalVoice && LocalVoiceRouting.phoneArguments(partial.text) != null)
                     var finishAt = 0L
                     // Phase 1: the recogniser's OWN time for this segment — feeds that ran
                     // during speech plus the tail decode here. The `stt=` field above can never
                     // say this (it is `now - segStart`, and an idle segment reports its idle time).
                     var decodeMs = -1L
+                    val hearing = stt
                     val text = when {
                         !speechOk -> null
                         reused -> { decodeMs = liveFeedDecodeMs.get(); partial!!.text }
@@ -1256,7 +1269,7 @@ class VoiceController(private val context: Context, private val session: HermesS
                         }
                         else -> {
                             val d0 = android.os.SystemClock.uptimeMillis()
-                            try { stt?.transcribeWhole(seg.toFloatArray(), sr) } catch (e: Throwable) { VoxLog.e("transcribe: ${e.message}"); null }
+                            try { hearing?.transcribeWhole(seg.toFloatArray(), sr) } catch (e: Throwable) { VoxLog.e("transcribe: ${e.message}"); null }
                                 .also { decodeMs = android.os.SystemClock.uptimeMillis() - d0 }
                         }
                     }
@@ -1357,6 +1370,11 @@ class VoiceController(private val context: Context, private val session: HermesS
                     turnUtterance = cleaned
                     turnAudio = if (inSpeech) seg.toFloatArray() else null   // the soul's ears (ER)
                     val myGen = turnGen
+                    // Match the original final text so a removed noise tag or repeat cannot create a command.
+                    val localArguments = if (allowLocalVoice && hearing != null && hearing !is RemoteStt &&
+                        confirmedEndpoint && !early && !reused && seeded == null) {
+                        LocalVoiceRouting.phoneArguments(t)
+                    } else null
                     val bargeRmsMin = micFloat("barge_rms_min", 0.10f)
                     // 0.6.2 echo guard: read the user-facing slider once per turn.
                     erEchoSkipMs = micFloat("er_echo_skip_ms", 700f).toLong()
@@ -1364,9 +1382,12 @@ class VoiceController(private val context: Context, private val session: HermesS
                     val levelOnlyMs = micInt("barge_level_only_ms", BargeGate.DEFAULT_LEVEL_ONLY_MS.toInt()).toLong()
                     val vadAvailable = (vad?.isAvailable == true)
                     VoxLog.d("event=barge-watch mode=single-capture vad=${if (vadAvailable) "on" else "off"} rmsMin=${"%.2f".format(bargeRmsMin)} gen=$myGen")
-                    // Fix 4: show what Hermes is about to be sent, before the reply exists.
+                    // Fix 4: show what the recogniser heard before the reply exists.
                     main.post { listener?.onHeard(cleaned) }
-                    main.post { runStreamedTurn(cleaned, myGen, fromVoice = true) }
+                    main.post {
+                        if (localArguments == null) runStreamedTurn(cleaned, myGen, fromVoice = true)
+                        else runLocalVoiceTurn(cleaned, myGen, localArguments)
+                    }
                     // Single-capture barge drain. While the gate is locked we keep r
                     // recording and read frames here — compute RMS, feed the SHARED VAD,
                     // and route a barge check when `speaking` (playback mode) or
@@ -1641,6 +1662,7 @@ class VoiceController(private val context: Context, private val session: HermesS
         erActive = false; erPresence.stop("call-end")
         soulGreeted = false   // 0.8/M3c: the next call opens with a greeting too
         pendingTurn.clear()   // F3: a hangup is not a reason to answer queued words after it
+        localVoiceTurn.clear()
         // 0.8/M1: the session's final ER numbers (the periodic emit covers the live
         // case; this one guarantees a hangup always closes the measurement out).
         if (presenceActive) VoxLog.er(ErTelemetry.line())
@@ -1704,13 +1726,19 @@ class VoiceController(private val context: Context, private val session: HermesS
     /** A text turn (the Send path / the text fallback). [pasted] is a clipboard turn:
      *  the text goes to the entity exactly as typed; a paste is never a command and its
      *  body is never logged. */
-    fun sendText(text: String, pasted: Boolean = false) {
+    fun sendText(text: String, pasted: Boolean = false, display: String? = null) {
         if (text.isBlank()) return
+        if (localVoiceTurn.deferTyped(turnGen, text, pasted, display)) return
+        submitTyped(text, pasted, display)
+    }
+
+    private fun submitTyped(text: String, pasted: Boolean, display: String?) {
         stopTts()
         // #240: a typed turn is a NEW reply, so it takes a new id. Reusing the live
         // turnGen ended the previous voice reply under the same id, and the ledger
         // (correctly) refuses to reopen an ended id — the typed turn would go silent.
         turnGen++
+        display?.let { listener?.onTypedSubmitted(it) }
         runStreamedTurn(text, turnGen, pasted = pasted)
     }
 
@@ -2400,6 +2428,68 @@ class VoiceController(private val context: Context, private val session: HermesS
         )
     }
 
+    private fun localVoiceEnabled(): Boolean =
+        prefsGetBoolean(LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED) &&
+            AlphaGate.allows(context, AlphaGate.FeatureSet.PHONE_TOOLS)
+
+    private fun runLocalVoiceTurn(text: String, gen: Long, arguments: Map<String, Any?>) {
+        if (stopped || !listening || gen != turnGen) return
+        if (waitPromptPending() || approvalPending()) {
+            voiceState.arm()
+            approvalVoice(text)
+            releaseTurnGate(gen, "approval-owns-turn")
+            return
+        }
+        if (turnInFlight || speaking || glueSpeaking || !localVoiceEnabled()) {
+            runStreamedTurn(text, gen, fromVoice = true)
+            return
+        }
+
+        // Hold the capture latch and defer a typed turn until this reply releases it.
+        localVoiceTurn.begin(gen)
+        voiceState.arm()
+        genCancelled = false
+        val active = {
+            !stopped && listening && gen == turnGen && localVoiceTurn.active(gen) &&
+                !genCancelled && !voiceState.released()
+        }
+        if (execSubmit {
+                val outcome = localActions.tryVoice(arguments) {
+                    active() && !focusPause && localVoiceEnabled() && !waitPromptPending() && !approvalPending()
+                }
+                main.post {
+                    if (!active()) return@post
+                    if (outcome == null) {
+                        when {
+                            focusPause -> releaseTurnGate(gen, "focus-pause")
+                            waitPromptPending() || approvalPending() -> {
+                                approvalVoice(text)
+                                releaseTurnGate(gen, "approval-owns-turn")
+                            }
+                            else -> runStreamedTurn(text, gen, fromVoice = true)
+                        }
+                        return@post
+                    }
+                    pendingTurn.clear()
+                    resumeSlot.clear()
+                    liveReply = gen to ""
+                    liveReplyDone = 0L
+                    turnUtterance = null
+                    turnAudio = null
+                    firstAudioPushed = false
+                    firstSoundPushed = false
+                    localReplyGen = gen
+                    replyGen = gen
+                    replies.begin(gen)
+                    armTranscript()
+                    startTurnClock()
+                    VoxLog.d("event=local-voice gen=$gen action=${arguments["action"]} ok=${outcome.ok}")
+                    settleReply(outcome.line, gen, local = true)
+                }
+            }) return
+        releaseTurnGate(gen, "stopped")
+    }
+
     // --- The streamed entity turn (REAL SSE) ---
     private fun runStreamedTurn(text: String, gen: Long, fromVoice: Boolean = false, pasted: Boolean = false) {
         if (turnInFlight) {
@@ -2415,8 +2505,7 @@ class VoiceController(private val context: Context, private val session: HermesS
         // A turn the caller just started by speaking is newer than anything queued: their own
         // words supersede the queued echo of an earlier ones (the pending slot is "newest wins").
         pendingTurn.clear()
-        // D38: the phone parses nothing. Every voice turn goes to the mind, which decides what it
-        // means and whether to act through the `phone` tool — with that path's grant and card.
+        // Hermes decides what ordinary voice turns mean and what its tools may do.
         val voiceTurn = fromVoice && presenceActive
         // 0.6.2 user-facing gates: the semantic-barge scope and the presence
         // runtime are user-togglable in Settings (er_semantic_barge / er_presence).
@@ -2443,8 +2532,7 @@ class VoiceController(private val context: Context, private val session: HermesS
             val presenceTarget = if (erPresenceOn) erPresence else erPresence.silentProxy
             presenceTarget.onTurnStart(text, android.os.SystemClock.uptimeMillis())
         }
-        // D30 — THE SOUL IS A COMPANION, NOT A GATEKEEPER. Every voice turn goes to the mind at
-        // once; nothing waits on the soul and the mind is never told the voice answered. The soul's
+        // D30: a gateway turn goes to the mind at once. Nothing waits on the soul. The soul's
         // one render at turn start asks for the BEAT — two to six words while the mind starts — or
         // silence. The beat races the mind: it is dropped if the mind's first text (or its voice)
         // gets there first, which is correct — the answer is what the caller is waiting for.
@@ -2504,20 +2592,11 @@ class VoiceController(private val context: Context, private val session: HermesS
         // A new turn starts with no wait question: the previous one's card (if any) is
         // retired and its one extension does not carry over.
         resetWaitPrompt()
+        localReplyGen = null
         replyGen = gen
         if (!replies.begin(gen)) VoxLog.w("event=reply-begin refused gen=$gen (already open or ended)")   // #240
         armTranscript()         // 0.5.0-A: a fresh reveal cursor for this turn
-        val t0 = android.os.SystemClock.uptimeMillis()
-        turnStartedAt = t0
-        // Phase 1: take this turn's speech-end anchor (one-shot — a typed turn must not
-        // inherit the previous utterance's) and the recogniser time that produced the text.
-        // The 15 s ceiling is a sanity rail, not a tunable: an anchor older than that belongs
-        // to a segment whose turn never started (a stop or a hangup mid-transcribe), and
-        // reporting it against a later typed turn would be a fabricated latency.
-        val anchor = pendingSpeechEndAt
-        turnSpeechEndAt = if (anchor > 0L && t0 - anchor in 0L..15_000L) anchor else 0L
-        pendingSpeechEndAt = 0L
-        if (pendingSttDecodeMs >= 0L) { LatencyStats.pushSttDecode(pendingSttDecodeMs); pendingSttDecodeMs = -1L }
+        val t0 = startTurnClock()
         // The mid-run aside's render starts with the run, not when the cadence's slot comes due:
         // the slot cannot open before LAG_AFTER_MS, and waiting until it does puts the whole
         // render between "due" and "delivered" (docs/PRESENCE-LATE-DIAGNOSIS.md). A turn that
@@ -3049,9 +3128,24 @@ class VoiceController(private val context: Context, private val session: HermesS
         }
     }
 
-    private fun settleReply(finalText: String, gen: Long) {
-        listener?.onLog("// agent → ${finalText.take(120)}")
-        listener?.onReply(finalText)
+    private fun startTurnClock(): Long {
+        val t0 = android.os.SystemClock.uptimeMillis()
+        turnStartedAt = t0
+        // Consume the speech-end anchor once. Ignore anchors from a segment that never started a turn.
+        val anchor = pendingSpeechEndAt
+        turnSpeechEndAt = if (anchor > 0L && t0 - anchor in 0L..15_000L) anchor else 0L
+        pendingSpeechEndAt = 0L
+        if (pendingSttDecodeMs >= 0L) { LatencyStats.pushSttDecode(pendingSttDecodeMs); pendingSttDecodeMs = -1L }
+        return t0
+    }
+
+    private fun settleReply(finalText: String, gen: Long, local: Boolean = false) {
+        if (local) {
+            listener?.onLocalReply(finalText)
+        } else {
+            listener?.onLog("// agent → ${finalText.take(120)}")
+            listener?.onReply(finalText)
+        }
         // 0.4.0.4 ghost re-speak: `streamed` alone was the wrong branch key. A hush that
         // lands in the millisecond before done=true has already run stopStreaming()
         // (which CLEARS streamed) and released this gen's gate, so a half-spoken,
@@ -3537,7 +3631,7 @@ class VoiceController(private val context: Context, private val session: HermesS
         val spoken = synchronized(cursorLock) { spokenSb.toString() }
         val heardChars = frozenChars ?: 0
         val mark = Resume.mark(spoken, heardChars, if (gen == replyGen) assembled else "",
-            liveReplyDone == replyGen, android.os.SystemClock.uptimeMillis())
+            liveReplyDone == replyGen, android.os.SystemClock.uptimeMillis(), gatewayReply = localReplyGen != replyGen)
         resumeSlot.put(mark)
         if (mark != null) VoxLog.d("event=resume-mark reason=$reason heardChars=${mark.heard.length} " +
             "unsaidChars=${mark.unsaid.length} finished=${mark.finished}" +
@@ -3803,6 +3897,10 @@ class VoiceController(private val context: Context, private val session: HermesS
                 // #28: the TTS completion callback runs on the engine thread; the
                 // listener must be dispatched on the main thread per the contract.
                 main.post {
+                    if (gen != turnGen || speakSeq.get() != seq) {
+                        endReply(gen, ReplyLedger.End.DONE)
+                        return@post
+                    }
                     listener?.onState("idle")
                     endReply(gen, ReplyLedger.End.DONE)   // #240: the one-shot reply's end event
                     releaseTurnGate(gen, "speak-done")   // release the realtime loop's speak-gate after speech finishes
@@ -3836,7 +3934,7 @@ class VoiceController(private val context: Context, private val session: HermesS
         // ER Phase 4: a barge cuts the presence loop with everything else —
         // the user's voice outranks the soul's fillers too.
         if (erActive) { erActive = false; erPresence.stop("barge") }
-        if (!erMindLive) {
+        if (localReplyGen == replyGen || !erMindLive) {
             // Presence off (or a non-voice turn): today's behavior, unchanged.
             genCancelled = true
             // #D1: ONE synchronous silence path — the gate release lands here, on main,
@@ -3960,8 +4058,10 @@ class VoiceController(private val context: Context, private val session: HermesS
         // is the expected path, not an anomaly. This was logging at W on every hangup — noise in
         // exactly the logs we read for field evidence.
         if (!voiceState.release()) { VoxLog.d("event=gate-release result=duplicate gen=$gen reason=$reason"); return }
+        localVoiceTurn.finish(gen)
         try { turnDone.countDown() } catch (_: Throwable) {}
         VoxLog.d("event=gate-release gen=$gen reason=$reason")          // (audit's epoch= dropped — private)
+        main.post { runPendingTurn() }
         // T3 phantom-turn guard (log honesty): a mid-generation endCall/hangup releases
         // with outcome=stop, and stop()'s voiceState.reset() clears the duplicate latch —
         // so the stream abort's reply-error/stream-error settle for the SAME gate epoch
@@ -3976,9 +4076,6 @@ class VoiceController(private val context: Context, private val session: HermesS
         // this the Phase-8 instrumentation had ZERO emit sites — every claim about
         // Presence was an impression. This is the line that makes the delta falsifiable.
         if (presenceActive && ErTelemetry.shouldEmit()) VoxLog.er(ErTelemetry.line())
-        // F3: this turn is over for the caller. If words were queued while it ran, they are the
-        // next turn — posted, so they start after this release is complete on every path.
-        main.post { runPendingTurn() }
     }
 
     /**
@@ -3991,15 +4088,19 @@ class VoiceController(private val context: Context, private val session: HermesS
      * the slot first — their own words are newer than the queued echo (see runStreamedTurn).
      */
     private fun runPendingTurn() {
-        if (stopped || !listening) return
+        if (stopped || !listening || localVoiceTurn.active(turnGen)) return
         // The floor must be free in BOTH senses: no mind turn, and no voice still playing (the
         // HOLD path releases the gate while the mind keeps working, and the reply's tail outlives
         // the stream loop). Retry shortly rather than dropping the words; the slot expires itself.
         if (!PendingTurn.floorFree(turnInFlight, speaking, glueSpeaking, streamed && !sClosed)) {
-            if (pendingTurn.pending() && !pendingFlushScheduled) {
+            if ((pendingTurn.pending() || localVoiceTurn.hasTyped()) && !pendingFlushScheduled) {
                 pendingFlushScheduled = true
                 main.postDelayed({ pendingFlushScheduled = false; runPendingTurn() }, PENDING_RETRY_MS)
             }
+            return
+        }
+        localVoiceTurn.takeTyped()?.let {
+            submitTyped(it.text, it.pasted, it.display)
             return
         }
         val queued = pendingTurn.take(android.os.SystemClock.uptimeMillis()) ?: return

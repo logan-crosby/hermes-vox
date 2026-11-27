@@ -41,6 +41,16 @@ class ResumeTest {
         assertNull(Resume.mark("", 0, "", finished = false, atMs = 0L))
     }
 
+    @Test fun `local spoken results never create a gateway resume mark`() {
+        val spoken = "Timer set for 5 minutes."
+        assertNull(
+            Resume.mark(
+                spoken, 12, spoken, finished = false, atMs = 0L, gatewayReply = false,
+            ),
+        )
+        assertNotNull(Resume.mark(spoken, 12, spoken, finished = false, atMs = 0L))
+    }
+
     @Test fun `the directive says it straight and asks for no repeat`() {
         val d = Resume.directive(Resume.mark(answer, 26, answer, true, 0L)!!, 1_000L)!!
         assertTrue(d.startsWith("[You were interrupted."))

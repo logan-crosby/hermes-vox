@@ -43,9 +43,13 @@ object Resume {
     /**
      * The record of a cut reply. [spoken] is the text handed to the voice (the cursor's index
      * space), [spokenChars] how much of it played, [assembled] everything the entity wrote.
-     * Null when there was nothing to interrupt.
+     * Only a gateway reply can produce a directive for the next gateway turn.
      */
-    fun mark(spoken: String, spokenChars: Int, assembled: String, finished: Boolean, atMs: Long): Mark? {
+    fun mark(
+        spoken: String, spokenChars: Int, assembled: String, finished: Boolean, atMs: Long,
+        gatewayReply: Boolean = true,
+    ): Mark? {
+        if (!gatewayReply) return null
         val heard = spoken.take(spokenChars.coerceIn(0, spoken.length)).trim()
         val unsaid = unsaidAfter(heard, assembled.ifBlank { spoken })
         if (heard.isEmpty() && unsaid.isEmpty()) return null
