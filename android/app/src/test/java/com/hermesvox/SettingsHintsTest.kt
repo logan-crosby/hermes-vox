@@ -300,6 +300,7 @@ class SettingsHintsTest {
             "AvatarView.KEY_SHAPE_SPEAKING",
             "AvatarView.KEY_SHAPE_THINKING",
             "ContinuousCapture.KEY",
+            "LocalVoiceRouting.PREF", // Restore Hearing Defaults resets this preview.
             "CuePolicy.PREF_ENABLED",
             "CuePolicy.PREF_IDLE_S",
             "CuePolicy.PREF_LEVEL",
