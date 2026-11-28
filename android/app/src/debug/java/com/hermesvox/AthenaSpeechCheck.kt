@@ -23,19 +23,25 @@ internal object AthenaSpeechCheck {
                 return done.get()
             }
             if (!ready(voice::init)) return report.put("speech_check", "piper_init_failed")
-            val audio = voice.renderSamples("Athena, set a timer for five minutes.")
-            val samples = audio.samples ?: return report.put("speech_check", "no_audio")
-            report.put("generated_samples", samples.size)
             if (!ready(vad::init)) return report.put("speech_check", "vad_init_failed")
-            val pcm = hearing.resample(samples, audio.sampleRate, 16000)
-            val detected = (0..(pcm.size - 512) step 512).any { vad.feed(pcm.copyOfRange(it, it + 512)) }
-            report.put("speech_detected", detected)
             if (!ready(hearing::init)) return report.put("speech_check", "whisper_init_failed")
-            val transcript = hearing.transcribe(pcm, 16000).orEmpty()
-            val expected = LocalVoiceRouting.phoneArguments("set a timer for five minutes")
-            val matched = LocalVoiceRouting.phoneArguments(transcript) == expected
-            report.put("five_minute_timer_recognized", matched)
-            return report.put("speech_check", if (detected && matched) "ok" else "mismatch")
+            val expected = mapOf("action" to "timer", "duration_ms" to 300_000L)
+            var passed = true
+            for ((name, phrase) in listOf("plain" to "Set a timer for five minutes.",
+                                         "addressed" to "Athena, set a timer for five minutes.")) {
+                val audio = voice.renderSamples(phrase)
+                val samples = audio.samples ?: return report.put("speech_check", "no_audio")
+                val pcm = hearing.resample(samples, audio.sampleRate, 16000)
+                vad.reset()
+                val detected = (0..(pcm.size - 512) step 512).any { vad.feed(pcm.copyOfRange(it, it + 512)) }
+                val transcript = hearing.transcribeWhole(pcm, 16000).orEmpty()
+                val matched = LocalVoiceRouting.phoneArguments(transcript) == expected
+                report.put(name, JSONObject().put("generated_samples", samples.size)
+                    .put("speech_detected", detected).put("fixture_transcript", transcript.take(160))
+                    .put("five_minute_timer_recognized", matched))
+                if (!detected || !matched) passed = false
+            }
+            return report.put("speech_check", if (passed) "ok" else "mismatch")
         } finally {
             vad.shutdown()
             hearing.shutdown()
