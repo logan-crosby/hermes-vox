@@ -175,6 +175,9 @@ class SherpaTts(private val context: Context, private val voice: SherpaVoice = S
     private fun speakerFor(eng: OfflineTts): Int =
         VoiceSpeakers.resolve(speakers, voice, eng.numSpeakers())
 
+    /** Synthesize in memory without opening an Android playback track. */
+    internal fun renderSamples(text: String): GeneratedAudio = synth(checkNotNull(tts), text)
+
     /** One phrase through the engine, with the voice's own controls. */
     private fun synth(eng: OfflineTts, text: String): GeneratedAudio = when {
         voice.isSupertonic -> {

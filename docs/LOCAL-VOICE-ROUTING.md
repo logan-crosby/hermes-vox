@@ -15,6 +15,10 @@ For the device test, interrupt a local confirmation and ask Hermes a new questio
 
 ## Check Athena settings
 
+For a headless check on a USB-connected phone, install the draft debug APK and run `scripts/athena-doctor --probe` from the checkout. Set `ANDROID_SERIAL` if more than one device is connected. The script needs ADB and Python 3. The first report reads phone settings, microphone permission, local model files, and encrypted credential availability. The optional probe reads the configured gateway model list and returns a failure status if it cannot verify the response. Neither check records audio or starts a conversation.
+
+Use `--full` while the app is idle to add a synthetic speech test and one test conversation. Piper generates a fixed timer request in memory. Silero checks for speech, and Whisper decodes the request. The test checks the timer arguments without setting a timer or opening the microphone or speaker. The separate gateway turn asks Athena for a fixed reply.
+
 Open **Settings > Hearing > Athena diagnostics**. The report shows the app version, the two switch settings, the selected speech recognizer, whether local model files are present, and the current timer and volume permissions. The selected recognizer can differ from the one used during a call if a model fails to load. **Copy report** copies only the displayed summary to the clipboard.
 
 For a memory check, open the owner's private Discord chat with Athena. Select `/memory-dream` and choose `status` or `diagnose` in the `args` field. Submitting the command with an empty field starts a run. The Android report is available offline and does not query memory.

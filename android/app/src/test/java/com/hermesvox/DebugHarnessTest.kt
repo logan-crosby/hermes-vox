@@ -31,8 +31,8 @@ class DebugHarnessTest {
 
     private fun attr(e: Element, name: String): String = e.getAttributeNS(androidNs, name)
 
-    private fun activityNamed(root: Element, name: String): Element? {
-        val all = root.getElementsByTagName("activity")
+    private fun componentNamed(root: Element, name: String, tag: String = "activity"): Element? {
+        val all = root.getElementsByTagName(tag)
         for (i in 0 until all.length) {
             val a = all.item(i) as Element
             if (attr(a, "name") == name || attr(a, "name") == "com.hermesvox$name") return a
@@ -42,15 +42,22 @@ class DebugHarnessTest {
 
     @Test
     fun `release main manifest does not declare the harness`() {
-        assertEquals(null, activityNamed(manifest("src/main/AndroidManifest.xml"), ".DebugHarnessActivity"))
+        assertEquals(null, componentNamed(manifest("src/main/AndroidManifest.xml"), ".DebugHarnessActivity"))
     }
 
     @Test
     fun `the debug manifest puts the harness behind DUMP`() {
-        val a = activityNamed(manifest("src/debug/AndroidManifest.xml"), ".DebugHarnessActivity")
+        val a = componentNamed(manifest("src/debug/AndroidManifest.xml"), ".DebugHarnessActivity")
             ?: error("the debug manifest must declare .DebugHarnessActivity")
         assertEquals("true", attr(a, "exported"))
         assertEquals("android.permission.DUMP", attr(a, "permission"))
+    }
+
+    @Test fun usbDiagnosticsRequireShellPermissionAndOnlyExistInDebug() {
+        val name = ".AthenaDiagnosticProvider"
+        assertEquals(null, componentNamed(manifest("src/main/AndroidManifest.xml"), name, "provider"))
+        val debug = requireNotNull(componentNamed(manifest("src/debug/AndroidManifest.xml"), name, "provider"))
+        assertEquals("android.permission.DUMP", attr(debug, "permission"))
     }
 
     @Test

@@ -44,6 +44,9 @@ class DebugHarnessActivity : MainActivity() {
      *  path; url/model/key stay blank-means-ignore. */
     private fun handleHarness(intent: android.content.Intent?) {
         if (intent == null) return
+        if (intent.getBooleanExtra("download_required_models", false)) {
+            ModelCatalog.missingRequired(this).forEach { ModelDownloads.enqueue(this, it) }
+        }
         val u = intent.getStringExtra("url"); val k = intent.getStringExtra("key")
         val m = intent.getStringExtra("model"); val text = intent.getStringExtra("text")
         val sc = intent.getStringExtra("scope")
