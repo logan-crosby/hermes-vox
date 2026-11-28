@@ -68,9 +68,8 @@ interface PhoneReadout {
  * | dial | `ACTION_DIAL` with `tel:` | **none.** The dialer opens with the number and the owner presses call: no `CALL_PHONE` and no emergency special case, because Vox never dials. With a live Vox call, the being says one line, the call ends through the same teardown the hang-up uses, and then the dialer opens — the conversation itself lives on. |
  * | launch / open | `PackageManager` launchable resolution; `ACTION_VIEW` for a URI | **none.** Only activities with a launcher entry are launchable, and the launch goes through [CallWindow] so a live call enters PiP first. If the window cannot shrink, the app still opens. |
  *
- * Every action is **mind-initiated** on the MCP wire, where the result is the reply. A caller's
- * words are never matched against a local grammar: a timer the owner asks for is the mind's call,
- * with the grant and the card that path enforces (D38).
+ * The MCP path returns a tool result. The opt-in voice path shares its validation and grants
+ * for the two commands in [LocalVoiceRouting].
  */
 class LocalActions(context: Context) : PhoneReadout {
 
@@ -78,8 +77,7 @@ class LocalActions(context: Context) : PhoneReadout {
     data class Outcome(val ok: Boolean, val line: String)
 
     /**
-     * What the owner's own lane can ask [run] to execute. These are typed actions, not a parser:
-     * the turn path no longer maps an utterance onto one (D38).
+     * The typed actions for the owner's [run] entry point.
      */
     sealed class LocalAction {
         abstract val kind: String
@@ -177,8 +175,7 @@ class LocalActions(context: Context) : PhoneReadout {
      * Take an action on the owner's behalf, for the owner-initiated entry point to this engine.
      * [nowElapsed]/[nowEpoch] are injectable so the registry maths is testable off-device.
      *
-     * This is not a turn path (D38): the caller's words are never parsed into a [LocalAction], and
-     * no voice turn reaches this method.
+     * The staged voice path uses [tryVoice] for grant checks and auditing.
      */
     fun run(
         intent: LocalAction,
@@ -193,6 +190,29 @@ class LocalActions(context: Context) : PhoneReadout {
     } catch (t: Throwable) {
         VoxLog.w("event=local-action failed kind=${intent.kind} reason=${t.javaClass.simpleName}")
         Outcome(false, LocalActionSpeech.failed(intent.kind))
+    }
+
+    /** Run off the UI thread. Null means this command can still go to Hermes. */
+    fun tryVoice(arguments: Map<String, Any?>, stillActive: () -> Boolean): Outcome? {
+        val action = actionOf(arguments)
+        val deadline = SystemClock.elapsedRealtime() + CALL_TIMEOUT_MS
+        val result = try {
+            when (val outcome = dispatch.call {
+                if (!stillActive() || SystemClock.elapsedRealtime() >= deadline) null else
+                    engine.dispatchLocalVoice(arguments, SystemClock.elapsedRealtime(), System.currentTimeMillis())
+            }) {
+                is PhoneDispatch.Outcome.Returned -> outcome.value ?: return null
+                PhoneDispatch.Outcome.TimedOut -> {
+                    uncertain(arguments, TIMEOUT_DETAIL)
+                    return Outcome(false, LocalActionSpeech.uncertain(action))
+                }
+            }
+        } catch (t: Exception) {
+            VoxLog.w("event=local-voice action=$action result=uncertain reason=${t.javaClass.simpleName}")
+            uncertain(arguments, FAILED_DETAIL)
+            return Outcome(false, LocalActionSpeech.uncertain(action))
+        }
+        return Outcome(result.ok, LocalActionSpeech.fromVoiceResult(result))
     }
 
     /**
@@ -217,7 +237,7 @@ class LocalActions(context: Context) : PhoneReadout {
         if (Looper.myLooper() == Looper.getMainLooper()) return phoneHere(arguments)
         return try {
             when (val outcome = dispatch.call { phoneHere(arguments) }) {
-                is PhoneDispatch.Outcome.Returned -> outcome.json
+                is PhoneDispatch.Outcome.Returned -> outcome.value
                 PhoneDispatch.Outcome.TimedOut -> uncertain(arguments, TIMEOUT_DETAIL)
             }
         } catch (t: MainThreadTimeout) {

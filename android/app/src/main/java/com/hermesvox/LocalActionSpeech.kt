@@ -27,6 +27,18 @@ object LocalActionSpeech {
     /** A plain failure: the action was recognised, the phone could not do it. */
     fun failed(kind: String): String = "I couldn't set that $kind."
 
+    fun uncertain(kind: String): String = "I could not confirm the $kind."
+
+    /** Confirm only the values the phone reports. */
+    fun fromVoiceResult(result: PhoneResult): String {
+        if (!result.ok) return failed(result.action)
+        return when (result.action) {
+            "timer" -> (result.facts["duration_ms"] as? Long)?.let(::timerSet)
+            "volume" -> (result.facts["level"] as? Int)?.let { "Media volume $it percent." }
+            else -> null
+        } ?: uncertain(result.action)
+    }
+
     /**
      * Do Not Disturb access is a special access only the user can grant in system settings. We do
      * not ask for it here (the manifest already declares it for #325's quiet calls), so when it is

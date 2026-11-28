@@ -30,6 +30,7 @@ class PhoneEngineTest {
         var dndRefuse = false
         var volume: Int? = 30
         var volumeSets = ArrayList<Int>()
+        var volumeApplied: Int? = null
         var volumeRefuse = false
         val notes = LinkedHashMap<String, String>()
         val mediaKeys = ArrayList<PhoneEngine.PhonePlatform.MediaKey>()
@@ -68,9 +69,10 @@ class PhoneEngineTest {
 
         override fun setVolume(percent: Int): Int? {
             if (volumeRefuse) return null
-            volumeSets.add(percent)
-            volume = percent
-            return percent
+            val applied = volumeApplied ?: percent
+            volumeSets.add(applied)
+            volume = applied
+            return applied
         }
 
         override fun adjustVolume(direction: Int): Int? {
@@ -127,7 +129,88 @@ class PhoneEngineTest {
     private fun call(arguments: Map<String, Any?>, nowElapsed: Long = t0, nowEpoch: Long = e0) =
         engine.dispatch(arguments, nowElapsed, nowEpoch)
 
+    private fun localVoiceEngine(fake: Fake, state: PhoneGrants.State) = PhoneEngine(
+        fake,
+        grants = PhoneGrants.Source { state },
+    )
+
     private fun timer(ms: Long = 300_000) = call(mapOf("action" to "timer", "duration_ms" to ms))
+
+    @Test fun local_voice_defers_for_ask_and_off_without_executing() {
+        for (state in listOf(PhoneGrants.State.ASK, PhoneGrants.State.OFF)) {
+            val localFake = Fake()
+            val localEngine = localVoiceEngine(localFake, state)
+            for (arguments in listOf(
+                mapOf("action" to "timer", "duration_ms" to 300_000L),
+                mapOf("action" to "volume", "level" to 40),
+            )) {
+                val result = localEngine.dispatchLocalVoice(arguments, t0, e0)
+                assertNull("$state must defer to Hermes", result)
+            }
+            assertEquals("$state must not arm a timer", 0, localFake.timerArms)
+            assertTrue("$state must not change volume", localFake.volumeSets.isEmpty())
+        }
+    }
+
+    @Test fun local_voice_allow_executes_once_and_keeps_owner_origin() {
+        val localFake = Fake()
+        val localEngine = localVoiceEngine(localFake, PhoneGrants.State.ALLOW)
+        val result = localEngine.dispatchLocalVoice(
+            mapOf("action" to "timer", "duration_ms" to 300_000L), t0, e0,
+        )
+        assertNotNull(result)
+        val success = checkNotNull(result)
+        assertTrue(success.ok)
+        assertEquals(1, localFake.timerArms)
+        val id = success.id!!
+        assertEquals(
+            PhoneReason.NOT_GRANTED,
+            localEngine.undo(id, t0, e0, PhoneEngine.Origin.MIND).reason,
+        )
+        assertTrue(localEngine.undo(id, t0, e0, PhoneEngine.Origin.OWNER).ok)
+        assertEquals(listOf(id), localFake.cancelled)
+    }
+
+    @Test fun local_voice_rejects_invalid_or_non_whole_minute_arguments_before_action() {
+        val localFake = Fake()
+        val localEngine = localVoiceEngine(localFake, PhoneGrants.State.ALLOW)
+        for (arguments in listOf(
+            mapOf("action" to "timer", "duration_ms" to 0L),
+            mapOf("action" to "timer", "duration_ms" to 30_000L),
+            mapOf("action" to "timer", "duration_ms" to 86_460_000L),
+            mapOf("action" to "volume", "level" to 101),
+        )) {
+            assertNull("invalid input must defer", localEngine.dispatchLocalVoice(arguments, t0, e0))
+        }
+        assertEquals(0, localFake.timerArms)
+        assertTrue(localFake.volumeSets.isEmpty())
+    }
+
+    @Test fun local_voice_device_failure_is_handled_without_a_false_success() {
+        val localFake = Fake().apply { timerFail = true }
+        val localEngine = localVoiceEngine(localFake, PhoneGrants.State.ALLOW)
+        val result = localEngine.dispatchLocalVoice(
+            mapOf("action" to "timer", "duration_ms" to 300_000L), t0, e0,
+        )
+        assertNotNull("a recognised local action stays handled", result)
+        assertFalse(result!!.ok)
+        assertEquals(1, localFake.timerArms)
+        assertEquals("I couldn't set that timer.", LocalActionSpeech.fromVoiceResult(result))
+    }
+
+    @Test fun local_voice_volume_speech_uses_the_level_the_phone_applied() {
+        val localFake = Fake().apply { volumeApplied = 40 }
+        val localEngine = localVoiceEngine(localFake, PhoneGrants.State.ALLOW)
+        val result = localEngine.dispatchLocalVoice(
+            mapOf("action" to "volume", "level" to 37), t0, e0,
+        )
+        assertNotNull(result)
+        val success = checkNotNull(result)
+        assertTrue(success.ok)
+        assertEquals(listOf(40), localFake.volumeSets)
+        assertEquals(40, success.facts["level"])
+        assertEquals("Media volume 40 percent.", LocalActionSpeech.fromVoiceResult(success))
+    }
 
     // ---- timer and alarm ----
 

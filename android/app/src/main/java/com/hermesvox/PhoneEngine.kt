@@ -611,6 +611,41 @@ class PhoneEngine(
                 }
             }
         }
+        recordAction(result, arguments, nowEpoch)
+        return result
+    }
+
+    /** Null defers to Hermes before any action or approval request. */
+    fun dispatchLocalVoice(
+        arguments: Map<String, Any?>,
+        nowElapsed: Long,
+        nowEpoch: Long,
+    ): PhoneResult? {
+        val action = arguments["action"] as? String ?: return null
+        val parameter = when (action) {
+            "timer" -> "duration_ms"
+            "volume" -> "level"
+            else -> return null
+        }
+        if (arguments.size != 2 || !arguments.containsKey(parameter)) return null
+        val group = PhoneGrants.groupOf(action) ?: return null
+        if (PhoneGrants.stateOf(grants, group) != PhoneGrants.State.ALLOW) return null
+        // Keep the grant read for this action consistent through validation and execution.
+        val parsed = PhoneTool.parse(arguments, PhoneGrants.Source { requested ->
+            if (requested == group) PhoneGrants.State.ALLOW else PhoneGrants.stateOf(grants, requested)
+        }) as? PhoneTool.Parsed.Run ?: return null
+        val call = parsed.call
+        when (call) {
+            is PhoneTool.Call.Timer -> if (call.durationMs % LocalVoiceRouting.MINUTE_MS != 0L) return null
+            is PhoneTool.Call.Volume -> if (call.level == null) return null
+            else -> return null
+        }
+        val result = execute(call, nowElapsed, nowEpoch, Origin.OWNER)
+        recordAction(result, arguments, nowEpoch)
+        return result
+    }
+
+    private fun recordAction(result: PhoneResult, arguments: Map<String, Any?>, nowEpoch: Long) {
         // The audit records refusals as well as successes, because "my agent says it tried" is a
         // claim the owner has to be able to check. A failure to record must not fail the call.
         // The initial approval request is the one exception: the desk already wrote its request row,
@@ -632,7 +667,6 @@ class PhoneEngine(
             } catch (_: Throwable) {
             }
         }
-        return result
     }
 
     /**

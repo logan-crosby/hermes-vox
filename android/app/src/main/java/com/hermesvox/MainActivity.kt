@@ -155,6 +155,7 @@ open class MainActivity : AppCompatActivity() {
         get() = if (compact) pipAvatar else avatar
     protected val prefs by lazy { getSharedPreferences("hv", Context.MODE_PRIVATE) }
     private var replyBuf = ""
+    private var replyIsLocal = false
     // #368: the crawl's finished-line ring (bounded) and the turn id that keeps a soul
     // answer from being recorded twice when the mind echoes it. The in-flight reply is
     // still replyBuf; it is sealed into this ring when the turn's speech is done.
@@ -2626,8 +2627,6 @@ open class MainActivity : AppCompatActivity() {
         // from the commands sheet — status feedback + the gateway's answer in a card,
         // instead of the word disappearing into the turn as ordinary conversation.
         if (CompressCommand.matches(text)) { compressContext(); return }
-        turnSeq++   // #368: a typed turn is a new trail chapter
-        appendConvo(transcript ?: "You: $text")
         val c = liveController ?: VoiceController(applicationContext, s).also {
             liveController = it
             wireSoul(it)
@@ -2635,10 +2634,15 @@ open class MainActivity : AppCompatActivity() {
             LatencyStats.resetSessionTurns()   // C3: first-use controller = fresh session
         }
         c.attachListeners(listener)
-        c.sendText(text)
+        c.sendText(text, display = transcript ?: "You: $text")
     }
 
     private val listener = object : VoiceController.Listener {
+        override fun onTypedSubmitted(display: String) = runOnUiThread {
+            turnSeq++   // #368: a typed turn is a new trail chapter
+            appendConvo(display)
+        }
+
         override fun onState(state: String) {
             runOnUiThread {
                 if (state != "thinking") toolCount = 0   // a new turn begins
@@ -2783,12 +2787,24 @@ open class MainActivity : AppCompatActivity() {
                 feed(MotionState.Signal.TOOL_DONE)   // -> avatar.pulseTool (satisfied shimmer)
             }
         } }
-        override fun onReply(finalText: String) { runOnUiThread {
+        override fun onReply(finalText: String) = runOnUiThread {
+            lastTurnFailed = false   // #284: a reply landed; nothing to fix
+            showReply(finalText, local = false)
+            // Only a Hermes reply can settle a file transfer.
+            fileShareRef?.agentReplied(finalText)
+        }
+
+        override fun onLocalReply(finalText: String) = runOnUiThread {
+            if (liveController?.voiceWillSpeak() == true) startReveal()
+            showReply(finalText, local = true)
+        }
+
+        private fun showReply(finalText: String, local: Boolean) {
             // The final full text still lands here; it is only PAINTED once the voice has
             // finished with the surface (the stream completes seconds before the audio
             // does — setting it here is the clobber that erased the reveal mid-sentence).
             replyBuf = finalText
-            lastTurnFailed = false   // #284: a reply landed; nothing to fix
+            replyIsLocal = local
             markActivity()
             feed(MotionState.Signal.RETIRE)   // previewB: a natural end settles, never recoils
             // #156: "reply ready" is a cue only when no speech will follow — otherwise
@@ -2799,11 +2815,7 @@ open class MainActivity : AppCompatActivity() {
             // frozen by a cut), so the screen is never left with a duplicate.
             if (!revealActive) { if (!compact) reply.setText(replyBuf); sealLiveReply(replyBuf) }
             appendReplyFinal(finalText)
-            // §B: only the agent can say the bytes did not match. Its reply settles the
-            // file's state; the app never turns silence into success. Guarded by the ref so
-            // an ordinary conversation never constructs the flow.
-            fileShareRef?.agentReplied(finalText)
-        } }
+        }
         override fun onError(msg: String) { runOnUiThread {
             // a cut or failed turn ends its step; a failed turn outranks a held step failure
             mainHandler.removeCallbacks(opTicker); opStep = null; opHeld = null
@@ -4014,10 +4026,12 @@ open class MainActivity : AppCompatActivity() {
      * seals the frozen part that was on screen, which is what the caller can re-read.
      */
     private fun sealLiveReply(text: String) {
+        val local = replyIsLocal
+        replyIsLocal = false
         replyBuf = ""
         reply.setText("")
         if (text.isBlank()) return
-        recordTrailLine(text, CrawlHistory.Kind.REPLY)
+        recordTrailLine(text, CrawlHistory.Kind.REPLY, local)
     }
 
     /**
@@ -4030,9 +4044,9 @@ open class MainActivity : AppCompatActivity() {
      * one copy of it either way. An ASIDE (Presence speaking on its own) is this device's own
      * line and stays in the ring, because the host's transcript has no such thing.
      */
-    private fun recordTrailLine(text: String, kind: CrawlHistory.Kind): Boolean {
+    private fun recordTrailLine(text: String, kind: CrawlHistory.Kind, local: Boolean = false): Boolean {
         if (text.isBlank()) return false
-        if (adoption.active && kind == CrawlHistory.Kind.REPLY) {
+        if (adoption.active && kind == CrawlHistory.Kind.REPLY && !local) {
             adoption.echo(text)
             renderResumed()
             return true

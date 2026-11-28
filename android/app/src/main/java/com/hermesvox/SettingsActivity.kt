@@ -2130,6 +2130,33 @@ class SettingsActivity : AppCompatActivity() {
     // prefs the pipeline reads; defaults = shipped values; a restore-defaults
     // button resets all eight) -------------------------------------------
     private fun bindMicSettings() {
+        findViewById<LinearLayout>(R.id.row_athena_diagnostics).setOnClickListener {
+            val grants = PhoneGrantStore.source(this)
+            val shipped = prefs.getString(ModelCatalog.KEY_STT_MODEL, null) ?: ModelCatalog.DEFAULT_STT_MODEL
+            val stream = prefs.getString(ModelCatalog.KEY_STT_STREAM_MODEL, null).orEmpty()
+            val hasLocalModel = ModelCatalog.isInstalled(this, shipped) ||
+                (ModelCatalog.isStreamingStt(stream) && ModelCatalog.isInstalled(this, stream))
+            fun switchLabel(on: Boolean) = if (on) "On" else "Off"
+            val report = getString(
+                R.string.athena_diagnostics_report, PresenceDiagnosticCollect.versionName(this),
+                switchLabel(prefs.getBoolean(LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED)),
+                switchLabel(AlphaGate.allows(this, AlphaGate.FeatureSet.PHONE_TOOLS)),
+                sttBackendLabel(prefs.getString(ModelCatalog.KEY_STT_BACKEND, null).orEmpty()),
+                PhoneGrants.stateOf(grants, "timer")?.label ?: "Unknown",
+                PhoneGrants.stateOf(grants, "volume")?.label ?: "Unknown",
+                if (hasLocalModel) "Present" else "Missing (open Voice models)",
+            )
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.athena_diagnostics_title)
+                .setMessage(report)
+                .setPositiveButton(android.R.string.ok, null)
+                .setNeutralButton(R.string.athena_copy_report) { _, _ ->
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.athena_diagnostics_title), report))
+                    Toast.makeText(this, R.string.athena_report_copied, Toast.LENGTH_SHORT).show()
+                }.show()
+        }
+        bindMicToggle(R.id.set_local_voice_routing, LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED)
         bindMicToggle(R.id.set_mic_aec, "mic_aec", true)
         bindMicToggle(R.id.set_ns_extra, "ns_extra", true)
         bindMicToggle(R.id.set_partial_stt, "partial_stt", true)
@@ -2793,6 +2820,7 @@ class SettingsActivity : AppCompatActivity() {
         val e = prefs.edit()
         when (group) {
             GROUP_MIC -> e
+                .putBoolean(LocalVoiceRouting.PREF, LocalVoiceRouting.DEFAULT_ENABLED)
                 .putFloat("vad_threshold", 0.5f)
                 .putInt("vad_silence_ms", 800)
                 .putInt("vad_early_silence_ms", 450)

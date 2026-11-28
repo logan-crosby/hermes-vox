@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Check the Athena draft installed on the ADB device selected by ANDROID_SERIAL."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+parser = argparse.ArgumentParser(description=__doc__)
+modes = parser.add_mutually_exclusive_group()
+modes.add_argument("--probe", action="store_true", help="also check the authenticated model list")
+modes.add_argument("--full", action="store_true", help="also test synthetic speech and a gateway turn")
+args = parser.parse_args()
+
+
+def check(method):
+    prefix = "Result: Bundle[{report="
+    cmd = [os.getenv("ADB", "adb"), "shell", "content", "call",
+           "--uri", "content://com.hermesvox.athena.diagnostics", "--method", method]
+    try:
+        line = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+        if line.startswith(prefix) and line.endswith("}]"):
+            value = json.loads(line[len(prefix):-2])
+            if isinstance(value, dict):
+                return value
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        pass
+    return {"error": "no_report", "check": method}
+
+
+report = {"phone": check("status")}
+phone = report["phone"]
+if "error" in phone:
+    report["hint"] = "Check ADB, USB authorization, device selection, and the installed debug build."
+failed = "error" in phone
+if not failed and (args.probe or args.full):
+    report["gateway"] = check("probe")
+    failed = report["gateway"].get("gateway_models_get") != "ok"
+if "error" not in phone and args.full:
+    required = ("microphone_granted", "gateway_configured", "gateway_key_encrypted",
+                "preview_enabled", "phone_tools_enabled", "on_device_stt_selected", "piper_selected")
+    models = phone.get("models", {})
+    configured = (all(phone.get(key) is True for key in required)
+                  and phone.get("timer_grant") == phone.get("volume_grant") == "allow"
+                  and bool(models) and all(models.values()))
+    report["voice_setup_ready"] = configured
+    report["speech"] = check("speech")
+    report["conversation"] = check("turn")
+    failed |= (not configured or report["speech"].get("speech_check") != "ok"
+               or report["conversation"].get("synthetic_gateway_turn") != "ok")
+print(json.dumps(report, indent=2))
+sys.exit(int(failed))

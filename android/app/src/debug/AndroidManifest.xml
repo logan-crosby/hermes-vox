@@ -9,6 +9,9 @@
          endpoint and bearer key, send a turn to an agent with terminal tools, and stage a
          readable file, so it must not be reachable by an intent from another app. -->
     <application>
+        <provider android:name=".AthenaDiagnosticProvider"
+            android:authorities="${applicationId}.athena.diagnostics"
+            android:exported="true" android:permission="android.permission.DUMP" />
         <activity
             android:name=".DebugHarnessActivity"
             android:exported="true"

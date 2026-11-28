@@ -125,7 +125,7 @@ abstract class SherpaOfflineStt(protected val context: Context, protected val mo
         OfflineRecognizerConfig(FeatureConfig(16000, 80, 0f), model, HomophoneReplacerConfig("", "", ""),
             "greedy_search", 4, "", 0f, "", "", 0f)
 
-    private fun resample(inp: FloatArray, fromHz: Int, toHz: Int): FloatArray {
+    internal fun resample(inp: FloatArray, fromHz: Int, toHz: Int): FloatArray {
         if (fromHz == toHz) return inp
         val ratio = toHz.toFloat() / fromHz; val nOut = (inp.size * ratio).toInt(); val out = FloatArray(nOut)
         for (i in 0 until nOut) { val idx = i / ratio; val i0 = idx.toInt(); val i1 = (i0 + 1).coerceAtMost(inp.size - 1); val fr = idx - i0; out[i] = inp[i0] * (1 - fr) + inp[i1] * fr }
