@@ -2,6 +2,7 @@ package com.hermesvox
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -58,5 +59,31 @@ class LocalVoiceRoutingTest {
     @Test fun local_routing_is_disabled_by_default() {
         assertFalse(LocalVoiceRouting.DEFAULT_ENABLED)
         assertEquals("local_voice_routing", LocalVoiceRouting.PREF)
+    }
+
+    @Test fun athena_can_be_addressed_once_before_a_complete_command() {
+        val timer = LocalVoiceRouting.phoneArguments("set a timer for five minutes")
+        val volume = LocalVoiceRouting.phoneArguments("set volume to 30 percent")
+        assertEquals(timer, LocalVoiceRouting.phoneArguments("Athena, set a timer for five minutes."))
+        assertEquals(volume, LocalVoiceRouting.phoneArguments("ATHENA set volume to 30 percent"))
+        for (phrase in listOf(
+            "Ask Athena to set a timer for five minutes",
+            "Athena, remember to set a timer for five minutes",
+            "Athena, don't set volume to 30 percent",
+            "Athena, set volume to 30 percent and tell me what you remember",
+            "Athena, set volume to 30 percent?",
+            "Athenaset volume to 30 percent",
+            "Athena, Athena, set volume to 30 percent",
+        )) assertNull(phrase, LocalVoiceRouting.phoneArguments(phrase))
+    }
+
+    @Test fun a_punctuated_partial_waits_for_the_final_decode() {
+        for (partial in listOf("Athena.", " ATHENA,", "Set a timer.", "set volume to thirty.", "Set")) {
+            assertTrue(partial, LocalVoiceRouting.needsFinalTranscript(partial))
+            assertNull(partial, LocalVoiceRouting.phoneArguments(partial))
+        }
+        for (ordinary in listOf("What is next?", "Settings are open.", "Athenaeum.")) {
+            assertFalse(ordinary, LocalVoiceRouting.needsFinalTranscript(ordinary))
+        }
     }
 }

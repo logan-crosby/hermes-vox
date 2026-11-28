@@ -6,12 +6,18 @@ The first stage covers two English commands in an active call. It uses the final
 
 1. Set up the Hermes gateway and on-device speech recognition. Enable Phone tools. Set the timer or volume permission to Allow.
 2. In Settings, open Hearing and enable **Local voice commands (preview)**. Start a voice call.
-3. Say “Set a timer for five minutes.” Check that one timer appears on the phone. Say “Set the media volume to thirty percent.” Check the reported level against the level Android applied.
+3. Say “Athena, set a timer for five minutes.” Check that one timer appears on the phone. Say “Set the media volume to thirty percent.” Check the reported level against the level Android applied. The name is optional during a call. The phone waits for the final transcript before it acts. A question such as “Athena, did I set a timer?” goes to Hermes.
 4. Change the relevant permission to Ask. Repeat the command. Vox sends the request to Hermes through its usual tool approval path. With permission Off, Hermes can also receive the request but cannot use that phone action.
 
 Starting a new call still requires a working gateway. This preview covers the action during a call. To return to the default behavior, turn off the preview in Hearing.
 
 For the device test, interrupt a local confirmation and ask Hermes a new question. Inspect the test gateway request. It must contain only the new turn and eligible Hermes context. In the debug build, use the test harness to submit text while the timer action is in progress. Check that the timer runs once and that each response belongs to the correct request.
+
+## Check Athena settings
+
+Open **Settings > Hearing > Athena diagnostics**. The report shows the app version, the two switch settings, the selected speech recognizer, whether local model files are present, and the current timer and volume permissions. The selected recognizer can differ from the one used during a call if a model fails to load. **Copy report** copies only the displayed summary to the clipboard.
+
+For a memory check, open the owner's private Discord chat with Athena. Select `/memory-dream` and choose `status` or `diagnose` in the `args` field. Submitting the command with an empty field starts a run. The Android report is available offline and does not query memory.
 
 ## Next experiment
 

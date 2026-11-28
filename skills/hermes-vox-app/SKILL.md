@@ -290,6 +290,12 @@ Each completed leg adds one structural element around the being, and at green it
 
 ## 5. The settings map
 
+### Athena draft
+
+- During an active call, “Athena, set a timer for five minutes” and “set media volume to thirty percent” can run on the phone. In Hearing, enable **Local voice commands (preview)**. Use on-device speech, enable Phone tools, and grant Allow for the action. The phone waits for the final transcript. Questions and memory requests go to Hermes. (android/app/src/main/java/com/hermesvox/LocalVoiceRouting.kt `fun phoneArguments(`)
+- For a routing problem, ask for **Settings > Hearing > Athena diagnostics > Copy report**. The report shows phone settings and local model file availability. It cannot establish which recognizer ran or whether the server is healthy. (android/app/src/main/java/com/hermesvox/SettingsActivity.kt `R.id.row_athena_diagnostics).setOnClickListener`)
+- For owner memory, open the private Discord chat with Athena. Select `/memory-dream` and choose `status` or `diagnose` in the `args` field. An empty field starts a run. The Android diagnostics screen never starts a memory run.
+
 All prefs live in one `SharedPreferences` file, `hv`
 (android/app/src/main/java/com/hermesvox/SettingsActivity.kt `getSharedPreferences("hv"`).
 "Default" is what an untouched install reads. Settings is a home list of groups with nested

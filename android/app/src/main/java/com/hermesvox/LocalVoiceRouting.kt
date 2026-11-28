@@ -11,6 +11,8 @@ object LocalVoiceRouting {
     private val timer = Regex("set a timer for (.+) minutes?")
     private val volume = Regex("set (?:the )?(?:media )?volume to (.+?)(?: percent| ?%)")
     private val spacing = Regex("[ \\t]+")
+    private val athenaAddress = Regex("^athena(?:, ?| )")
+    private val commandStart = Regex("^(?:athena|set)(?=[\\s,.!?]|$)", RegexOption.IGNORE_CASE)
     private val digits = Regex("[0-9]+")
     private val smallNumbers = listOf(
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -19,8 +21,12 @@ object LocalVoiceRouting {
     )
     private val tens = listOf("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
 
+    /** A recognizer can add punctuation before the caller finishes the command. */
+    fun needsFinalTranscript(partial: String): Boolean = commandStart.containsMatchIn(partial.trimStart())
+
     fun phoneArguments(transcript: String): Map<String, Any?>? {
-        val command = transcript.trim().removeSuffix(".").lowercase(Locale.ROOT).replace(spacing, " ")
+        val command = transcript.trim().removeSuffix(".").lowercase(Locale.ROOT)
+            .replace(spacing, " ").replaceFirst(athenaAddress, "")
         timer.matchEntire(command)?.let { match ->
             val minutes = number(match.groupValues[1]) ?: return null
             if (minutes !in 1..(PhoneTool.MAX_DURATION_MS / MINUTE_MS).toInt()) return null

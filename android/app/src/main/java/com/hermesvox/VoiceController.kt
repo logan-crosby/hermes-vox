@@ -1202,7 +1202,7 @@ class VoiceController(private val context: Context, private val session: HermesS
                                         // #229: the endpointer's stability clock runs on the live
                                         // hypothesis, so it must see every tick that changed it.
                                         if (live != null) semantic?.onPartial(t, android.os.SystemClock.uptimeMillis())
-                                        val deferToFinal = allowLocalVoice && LocalVoiceRouting.phoneArguments(t) != null
+                                        val deferToFinal = allowLocalVoice && LocalVoiceRouting.needsFinalTranscript(t)
                                         if (voiceState.mayStart(t, sm, now) && !deferToFinal) {
                                             main.post {
                                                 if (!turnInFlight && !commitRequested && segCounter == segId) {
@@ -1250,7 +1250,7 @@ class VoiceController(private val context: Context, private val session: HermesS
                     val partial = latestPartial.get()?.takeIf { it.segId == segId }
                     val reused = speechOk && partial != null &&
                         EarlyStartRule.mayReusePartial(partial.start, partial.end, lastSpeechEnd) &&
-                        !(allowLocalVoice && LocalVoiceRouting.phoneArguments(partial.text) != null)
+                        !(allowLocalVoice && LocalVoiceRouting.needsFinalTranscript(partial.text))
                     var finishAt = 0L
                     // Phase 1: the recogniser's OWN time for this segment — feeds that ran
                     // during speech plus the tail decode here. The `stt=` field above can never
