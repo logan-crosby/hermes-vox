@@ -18,6 +18,8 @@ object AppSkill {
 
     private const val RAW = "https://raw.githubusercontent.com/chezgoulet/hermes-vox"
     private const val PATH = "skills/hermes-vox-app/SKILL.md"
+    // Update this pin when the draft guide changes. An installed APK keeps its matching guide.
+    private const val ATHENA_GUIDE = "https://raw.githubusercontent.com/logan-crosby/hermes-vox/e2ae03009eba412823e8608ef5854e1971c7cbb4"
 
     /**
      * The skill that describes **this build**: a release reads it from its own tag, a nightly
@@ -27,6 +29,7 @@ object AppSkill {
      */
     fun url(versionName: String): String {
         val v = versionName.trim()
+        if (v.endsWith("-athena-draft")) return "$ATHENA_GUIDE/$PATH"
         val ref = if (v.isEmpty() || v.contains("nightly") || v.contains("-")) "testing" else "v$v"
         return "$RAW/$ref/$PATH"
     }

@@ -24,6 +24,13 @@ class AppSkillTest {
         assertEquals("", AppSkill.profileOf("https://gw.example"))
     }
 
+    @Test fun athenaDraftUsesItsPinnedForkGuide() {
+        val version = "0.9.1.4-athena-draft"
+        val url = AppSkill.url(version)
+        assertTrue(Regex("https://raw[.]githubusercontent[.]com/logan-crosby/hermes-vox/[0-9a-f]{40}/skills/hermes-vox-app/SKILL[.]md").matches(url))
+        assertTrue(AppSkill.installTurn(version, "work").contains("hermes -p work skills install $url"))
+    }
+
     @Test fun theTurnSaysWhatItRuns() {
         assertTrue(AppSkill.installTurn("0.9.1", "work").contains(AppSkill.command("0.9.1", "work")))
     }

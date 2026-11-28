@@ -29,6 +29,7 @@ android {
         targetSdkVersion 34
         versionCode 151
         versionName "0.9.1.4"
+        versionNameSuffix "-athena-draft"
         // Instrumented tests are the on-device measurement path (docs/PRESENCE-BENCH.md):
         // they need a device, so gate.sh never runs them, and they never ship in an APK.
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

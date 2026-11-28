@@ -19,6 +19,8 @@ Open **Settings > Hearing > Athena diagnostics**. The report shows the app versi
 
 For a memory check, open the owner's private Discord chat with Athena. Select `/memory-dream` and choose `status` or `diagnose` in the `args` field. Submitting the command with an empty field starts a run. The Android report is available offline and does not query memory.
 
+The app version ends in `-athena-draft`. In **Entity & Connection > Teach your agent this app**, the install command uses the fork guide that matches this draft. The owner can inspect the command before deciding whether to install the guide on a gateway.
+
 ## Next experiment
 
 Can the phone model recognize more ways to ask for a timer or a volume change? Keep the existing voice response and permission checks in place. Run the model on saved synthetic transcripts first. Give the model three possible results: a timer duration, a media volume level, or a handoff to Hermes. Record its prediction without executing an action or sending a request.
